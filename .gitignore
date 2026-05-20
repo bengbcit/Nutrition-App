@@ -1,6 +1,32 @@
+# 现有的（保留）
 node_modules/
 .env.local
+.env*.local
 .next/
 out/
 dist/
 *.log
+certificates
+
+# 建议新增的
+.env                    # 任何 env 文件都别提交（保险起见）
+!.env.example           # 但允许提交 .env.example 模板
+
+# 临时测试文件
+test_*.jpg
+test_*.png
+test.html
+t.html
+*.tmp
+
+# OS 生成的垃圾
+.DS_Store               # Mac
+Thumbs.db               # Windows
+desktop.ini             # Windows
+
+# IDE 配置
+.vscode/                # 如果有的话，里面可能有本地路径
+.idea/
+
+# Pi 相关
+*.swp                   # vim 临时文件

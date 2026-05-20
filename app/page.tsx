@@ -1,65 +1,114 @@
-import Image from "next/image";
+// app/page.tsx
+'use client';
+
+import { useState } from 'react';
+import SmartCamera from './components/SmartCamera';  // ← 改这里
+import ResultDisplay from './components/ResultDisplay';
+
+interface FoodResult {
+  foods: string[];
+  calories: number;
+  nutrition: {
+    protein: number;
+    carbs: number;
+    fat: number;
+  };
+}
 
 export default function Home() {
+  const [imageData, setImageData] = useState<string | null>(null);
+  const [analysisResult, setAnalysisResult] = useState<FoodResult | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleCapture = async (image: string) => {
+    setImageData(image);
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      // 兼容：image 可能是完整 data URL 或纯 base64
+      const base64Image = image.includes(',') ? image.split(',')[1] : image;
+      
+      const response = await fetch('/api/analyze-food', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64Image }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Analysis failed');
+      }
+      
+      const result: FoodResult = await response.json();
+      setAnalysisResult(result);
+      
+    } catch (error) {
+      console.error('Analysis error:', error);
+      setError(`Failed to analyze food: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      
+      // 仅开发模式 fallback
+      if (process.env.NODE_ENV === 'development') {
+        setAnalysisResult({
+          foods: ['[MOCK] Grilled Chicken', '[MOCK] Steamed Vegetables', '[MOCK] Brown Rice'],
+          calories: 520,
+          nutrition: { protein: 35, carbs: 45, fat: 18 }
+        });
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleReset = () => {
+    setImageData(null);
+    setAnalysisResult(null);
+    setError(null);
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <main className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+      <div className="container mx-auto py-8 px-4">
+        <header className="text-center mb-8">
+          <h1 className="text-4xl font-bold text-gray-800 mb-2">
+            🍽️ Nutrition Fitness App
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="text-gray-600">
+            AI-powered food recognition
           </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+        </header>
+
+        {!analysisResult ? (
+          <div className="max-w-2xl mx-auto">
+            <SmartCamera onCapture={handleCapture} />  {/* ← 改这里 */}
+            
+            {isLoading && (
+              <div className="mt-8 text-center">
+                <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mb-4"></div>
+                <p className="text-gray-600">Analyzing your food...</p>
+              </div>
+            )}
+            
+            {error && (
+              <div className="mt-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+                {error}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="max-w-4xl mx-auto">
+            <div className="grid md:grid-cols-2 gap-8">
+              {imageData && (
+                <div className="bg-white rounded-lg shadow-lg p-4">
+                  <h3 className="font-semibold mb-2">📸 Captured Photo</h3>
+                  <img src={imageData} alt="Food" className="w-full rounded-lg" />
+                </div>
+              )}
+              <ResultDisplay result={analysisResult} onReset={handleReset} />
+            </div>
+          </div>
+        )}
+      </div>
+    </main>
   );
 }
