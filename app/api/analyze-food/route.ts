@@ -1,22 +1,215 @@
 // app/api/analyze-food/route.ts
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'crypto';
 
 type Provider = 'groq' | 'nvidia' | 'gemini' | 'mock';
 
-// 获取环境变量
 const PROVIDER = (process.env.ANALYSIS_PROVIDER || 'mock') as Provider;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
+// 性能配置
+const TIMEOUT_MS = 30_000;
+const CACHE_TTL_MS = 10 * 60 * 1000;        // 缓存 10 分钟
+const CACHE_MAX_SIZE = 100;                 // 最多缓存 100 张
+const IMAGE_MAX_BYTES = 4 * 1024 * 1024;    // 4MB 以上的图片建议压缩（前端处理）
+
+// ============================================
+// 统一 prompt
+// ============================================
+const ANALYSIS_PROMPT = `Identify foods in this image. Return ONLY valid JSON:
+{
+  "foods": ["food1", "food2"],
+  "calories": 520,
+  "nutrition": {"protein": 28, "carbs": 45, "fat": 18}
+}
+
+Rules:
+- Use short food names (max 4 words each)
+- If no food: {"foods": [], "calories": 0, "nutrition": {"protein": 0, "carbs": 0, "fat": 0}}
+- All numbers must be integers, no strings, no placeholders`;
+
+// ============================================
+// Type definitions
+// ============================================
+interface FoodResult {
+  foods: string[];
+  calories: number;
+  nutrition: { protein: number; carbs: number; fat: number };
+}
+
+interface CachedEntry {
+  result: FoodResult;
+  expiresAt: number;
+  provider: Provider;
+}
+
+// ============================================
+// In-memory cache (使用 Map，LRU 清理)
+// ============================================
+const analysisCache = new Map<string, CachedEntry>();
+
+function hashImage(base64: string): string {
+  // 用 SHA-256 哈希，比手写 hash function 可靠得多
+  // 同一张图永远得到同一个 hash
+  return createHash('sha256').update(base64).digest('hex').substring(0, 16);
+}
+
+function getCached(key: string): FoodResult | null {
+  const entry = analysisCache.get(key);
+  if (!entry) return null;
+
+  // 过期了 → 删除
+  if (Date.now() > entry.expiresAt) {
+    analysisCache.delete(key);
+    return null;
+  }
+
+  // LRU: 重新插入让它移到 Map 末尾（"最近使用")
+  analysisCache.delete(key);
+  analysisCache.set(key, entry);
+  return entry.result;
+}
+
+function setCached(key: string, result: FoodResult) {
+  // 超过最大容量 → 删除最老的（Map 头部）
+  if (analysisCache.size >= CACHE_MAX_SIZE) {
+    const oldestKey = analysisCache.keys().next().value;
+    if (oldestKey) analysisCache.delete(oldestKey);
+  }
+
+  analysisCache.set(key, {
+    result,
+    expiresAt: Date.now() + CACHE_TTL_MS,
+    provider: PROVIDER,
+  });
+}
+
+// ============================================
+// fetch with timeout
+// ============================================
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// ============================================
+// JSON 解析（处理 markdown 包裹、附带文本等情况）
+// ============================================
+function safeJsonParse(text: string): FoodResult {
+  // 尝试 1: 直接解析
+  try {
+    return JSON.parse(text);
+  } catch { }
+
+  // 清理 markdown 标记
+  const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+  // 尝试 2: 清理后解析
+  try {
+    return JSON.parse(cleaned);
+  } catch { }
+
+  // 尝试 3: 提取完整 { ... } 块
+  const fullMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (fullMatch) {
+    try {
+      return JSON.parse(fullMatch[0]);
+    } catch { }
+  }
+
+  // 尝试 4: 修复被截断的 JSON
+  // 比如 '{"foods": ["A", "B"], "c'  →  '{"foods": ["A", "B"]}'
+  try {
+    return repairTruncatedJson(cleaned);
+  } catch { }
+
+  throw new Error(`Could not parse JSON from response: ${text.substring(0, 200)}`);
+}
+
+// ====================================================
+// 尝试修复被截断的 JSON,只要前面有完整的 foods 数组就够用
+// ====================================================
+function repairTruncatedJson(text: string): FoodResult {
+  // 提取 foods 数组
+  const foodsMatch = text.match(/"foods"\s*:\s*\[([\s\S]*?)\]/);
+  if (!foodsMatch) throw new Error('No foods array found');
+
+  // 解析 foods 数组
+  const foodsArrayStr = '[' + foodsMatch[1] + ']';
+  let foods: string[];
+  try {
+    foods = JSON.parse(foodsArrayStr);
+  } catch {
+    throw new Error('Could not parse foods array');
+  }
+
+  // 提取数字字段（即使没找到也用合理默认值）
+  const caloriesMatch = text.match(/"calories"\s*:\s*(\d+)/);
+  const proteinMatch = text.match(/"protein"\s*:\s*(\d+)/);
+  const carbsMatch = text.match(/"carbs"\s*:\s*(\d+)/);
+  const fatMatch = text.match(/"fat"\s*:\s*(\d+)/);
+
+  console.warn(`⚠️  JSON was truncated, recovered partial result: ${foods.length} foods`);
+
+  return {
+    foods,
+    calories: caloriesMatch ? parseInt(caloriesMatch[1]) : 0,
+    nutrition: {
+      protein: proteinMatch ? parseInt(proteinMatch[1]) : 0,
+      carbs: carbsMatch ? parseInt(carbsMatch[1]) : 0,
+      fat: fatMatch ? parseInt(fatMatch[1]) : 0,
+    },
+  };
+}
+
+// ============================================
+// Main handler 
+// ============================================
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+
   try {
     const { image } = await request.json();
 
-    // 移除 base64 头 (data:image/jpeg;base64,) 兼容带 header 和不带 header 两种格式
+    if (!image) {
+      return NextResponse.json({ error: 'No image provided' }, { status: 400 });
+    }
+
+    // 兼容带 header 和纯 base64 两种格式
     const base64Image = image.includes(',') ? image.split(',')[1] : image;
 
-    let result;
+    // 监控：图片大小
+    const imageBytes = Math.floor(base64Image.length * 0.75);  // base64 解码后大约是 75% 大小
+    const imageKB = (imageBytes / 1024).toFixed(0);
+
+    if (imageBytes > IMAGE_MAX_BYTES) {
+      console.warn(`⚠️  Large image: ${imageKB}KB. Consider compressing on frontend.`);
+    }
+
+    // 缓存检查
+    const cacheKey = hashImage(base64Image);
+    const cached = getCached(cacheKey);
+    if (cached) {
+      const elapsed = Date.now() - startTime;
+      console.log(`✨ Cache HIT (${cacheKey.substring(0, 8)}) in ${elapsed}ms | image: ${imageKB}KB`);
+      return NextResponse.json({
+        ...cached,
+        _meta: { cached: true, elapsedMs: elapsed, provider: PROVIDER },
+      });
+    }
+
+    // 缓存 miss，调用 AI
+    console.log(`🔍 Analyzing with provider: ${PROVIDER} | image: ${imageKB}KB | cache size: ${analysisCache.size}`);
+
+    let result: FoodResult;
     switch (PROVIDER) {
       case 'groq':
         result = await analyzeWithGroq(base64Image);
@@ -31,174 +224,151 @@ export async function POST(request: NextRequest) {
         result = await analyzeWithMock();
     }
 
-    return NextResponse.json(result);
+    // 写入缓存
+    setCached(cacheKey, result);
+
+    const elapsed = Date.now() - startTime;
+    console.log(`✅ Analysis done in ${elapsed}ms | provider: ${PROVIDER}`);
+
+    return NextResponse.json({
+      ...result,
+      _meta: { cached: false, elapsedMs: elapsed, provider: PROVIDER },
+    });
 
   } catch (error) {
-    console.error('API Error:', error);
+    const elapsed = Date.now() - startTime;
+    console.error(`❌ API Error after ${elapsed}ms:`, error);
+
+    // 区分超时和其他错误
+    const isTimeout = error instanceof Error && error.name === 'AbortError';
+
     return NextResponse.json(
-      { error: 'Failed to analyze food' },
-      { status: 500 }
+      {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        provider: PROVIDER,
+        elapsedMs: elapsed,
+      },
+      { status: isTimeout ? 504 : 500 }
     );
   }
 }
 
 // ============================================
-// Groq API (最快，推荐)
+// Groq API
 // ============================================
-async function analyzeWithGroq(imageBase64: string) {
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+async function analyzeWithGroq(imageBase64: string): Promise<FoodResult> {
+  if (!GROQ_API_KEY) throw new Error('GROQ_API_KEY is not configured');
+
+  const response = await fetchWithTimeout('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${GROQ_API_KEY}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'llama-3.2-90b-vision-preview',  // 或 'llama-3.2-11b-vision-preview'
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: `Analyze this food image and return ONLY valid JSON in this exact format:
-{
-  "foods": ["food1", "food2"],
-  "calories": 450,
-  "nutrition": {
-    "protein": 25,
-    "carbs": 40,
-    "fat": 15
-  }
-}
-Use real estimates. Be specific about food types.`
-            },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:image/jpeg;base64,${imageBase64}`
-              }
-            }
-          ]
-        }
-      ],
+      model: 'llama-3.2-90b-vision-preview',
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: ANALYSIS_PROMPT },
+          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
+        ],
+      }],
       temperature: 0.3,
-      max_tokens: 500,
-      response_format: { type: "json_object" }
-    })
+      max_tokens: 4096,
+      response_format: { type: 'json_object' },
+    }),
   });
 
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Groq API ${response.status}: ${errorText.substring(0, 200)}`);
+  }
+
   const data = await response.json();
-  const content = data.choices[0].message.content;
-  return JSON.parse(content);
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error('Groq returned no content');
+  return safeJsonParse(content);
 }
 
 // ============================================
 // NVIDIA API
 // ============================================
-async function analyzeWithNvidia(imageBase64: string) {
-  // NVIDIA 需要先获取 NGC API Key
-  // 注册: https://build.nvidia.com/
+async function analyzeWithNvidia(imageBase64: string): Promise<FoodResult> {
+  if (!NVIDIA_API_KEY) throw new Error('NVIDIA_API_KEY is not configured');
 
-  const response = await fetch('https://api.nvcf.nvidia.com/v2/nvcf/pexec/functions', {
+  const response = await fetchWithTimeout('https://api.nvcf.nvidia.com/v2/nvcf/pexec/functions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${NVIDIA_API_KEY}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: 'Analyze this food image. Return JSON with foods(array), calories(number), nutrition(protein,carbs,fat in grams)'
-            },
-            {
-              type: 'image_url',
-              image_url: `data:image/jpeg;base64,${imageBase64}`
-            }
-          ]
-        }
-      ],
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: ANALYSIS_PROMPT },
+          { type: 'image_url', image_url: `data:image/jpeg;base64,${imageBase64}` },
+        ],
+      }],
       temperature: 0.2,
-      max_tokens: 300
-    })
+      max_tokens: 4096,
+    }),
   });
 
-  const data = await response.json();
-  // NVIDIA 返回格式可能不同，需要根据实际响应调整
-  const content = data.choices?.[0]?.message?.content || data.response;
-
-  try {
-    return JSON.parse(content);
-  } catch {
-    // 如果返回不是 JSON，尝试提取
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
-    }
-    throw new Error('Invalid response format');
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`NVIDIA API ${response.status}: ${errorText.substring(0, 200)}`);
   }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content || data.response;
+  if (!content) throw new Error('NVIDIA returned no content');
+  return safeJsonParse(content);
 }
 
 // ============================================
-// Google Gemini API (免费额度大)
+// Gemini API
 // ============================================
-async function analyzeWithGemini(imageBase64: string) {
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+async function analyzeWithGemini(imageBase64: string): Promise<FoodResult> {
+  if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is not configured');
+
+  const response = await fetchWithTimeout(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
     {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              {
-                text: `Analyze this food image. Return ONLY valid JSON in this exact format, no markdown, no explanation:
-{
-  "foods": ["specific food names"],
-  "calories": estimated_calories,
-  "nutrition": {
-    "protein": grams,
-    "carbs": grams,
-    "fat": grams
-  }
-}`
-              },
-              {
-                inline_data: {
-                  mime_type: "image/jpeg",
-                  data: imageBase64
-                }
-              }
-            ]
-          }
-        ],
+        contents: [{
+          parts: [
+            { text: ANALYSIS_PROMPT },
+            { inline_data: { mime_type: 'image/jpeg', data: imageBase64 } },
+          ],
+        }],
         generationConfig: {
           temperature: 0.2,
-          maxOutputTokens: 500,
-          responseMimeType: "application/json"
-        }
-      })
+          maxOutputTokens: 4096,
+          responseMimeType: 'application/json',
+        },
+      }),
     }
   );
 
-  const data = await response.json();
-  const text = data.candidates[0].content.parts[0].text;
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Gemini API ${response.status}: ${errorText.substring(0, 200)}`);
+  }
 
-  // 清理可能的 markdown 标记
-  const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '');
-  return JSON.parse(cleaned);
+  const data = await response.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error('Gemini returned no text');
+  return safeJsonParse(text);
 }
 
 // ============================================
-// Mock 分析（用于测试，无需 API Key）
+// Mock
 // ============================================
-async function analyzeWithMock() {
+async function analyzeWithMock(): Promise<FoodResult> {
   const mockFoods = [
     { foods: ['Grilled Chicken', 'Steamed Broccoli', 'Brown Rice'], calories: 485, protein: 38, carbs: 42, fat: 16 },
     { foods: ['Caesar Salad', 'Grilled Salmon'], calories: 520, protein: 35, carbs: 15, fat: 28 },
@@ -206,18 +376,11 @@ async function analyzeWithMock() {
     { foods: ['Vegetable Stir Fry', 'Tofu', 'Quinoa'], calories: 420, protein: 22, carbs: 55, fat: 14 },
     { foods: ['Egg Sandwich', 'Avocado'], calories: 380, protein: 18, carbs: 35, fat: 18 },
   ];
-
   const random = mockFoods[Math.floor(Math.random() * mockFoods.length)];
-
   await new Promise(resolve => setTimeout(resolve, 1000));
-
   return {
     foods: random.foods,
     calories: random.calories,
-    nutrition: {
-      protein: random.protein,
-      carbs: random.carbs,
-      fat: random.fat
-    }
+    nutrition: { protein: random.protein, carbs: random.carbs, fat: random.fat },
   };
 }

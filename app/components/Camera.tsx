@@ -65,12 +65,25 @@ export default function Camera({ onCapture }: CameraProps) {
             const context = canvasRef.current.getContext('2d');
             if (context) {
                 // Use video's actual dimensions for better quality
-                const width = videoRef.current.videoWidth;
-                const height = videoRef.current.videoHeight;
+                const origWidth = videoRef.current.videoWidth;
+                const origHeight = videoRef.current.videoHeight;
+
+                // 限制最大边长 1280px，按比例缩放
+                const MAX_DIM = 1280;
+                let width = origWidth;
+                let height = origHeight;
+                if (Math.max(width, height) > MAX_DIM) {
+                    const scale = MAX_DIM / Math.max(width, height);
+                    width = Math.round(width * scale);
+                    height = Math.round(height * scale);
+                }
+
                 canvasRef.current.width = width;
                 canvasRef.current.height = height;
                 context.drawImage(videoRef.current, 0, 0, width, height);
-                const imageData = canvasRef.current.toDataURL('image/jpeg', 0.9);
+
+                // 0.85 质量，对 AI 来说足够
+                const imageData = canvasRef.current.toDataURL('image/jpeg', 0.85);
                 setCapturedImage(imageData);
                 onCapture(imageData);
                 stopCamera();

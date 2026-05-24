@@ -1,60 +1,66 @@
 // app/page.tsx
 'use client';
 
-import { useState } from 'react';
-import SmartCamera from './components/SmartCamera';  // ← 改这里
+import { useState, useEffect } from 'react';
+import SmartCamera from './components/SmartCamera';
+import DemoImages from './components/DemoImages';
 import ResultDisplay from './components/ResultDisplay';
-
-interface FoodResult {
-  foods: string[];
-  calories: number;
-  nutrition: {
-    protein: number;
-    carbs: number;
-    fat: number;
-  };
-}
+import NutritionChart from './components/NutritionChart';
+import AnalysisHistory from './components/AnalysisHistory';
+import {
+  FoodResult,
+  AnalysisRecord,
+  loadHistory,
+  addRecord
+} from './lib/history';
 
 export default function Home() {
   const [imageData, setImageData] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<FoodResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<AnalysisRecord[]>([]);
+
+  // 启动时加载历史记录
+  useEffect(() => {
+    setHistory(loadHistory());
+  }, []);
 
   const handleCapture = async (image: string) => {
     setImageData(image);
     setIsLoading(true);
     setError(null);
-    
+
     try {
-      // 兼容：image 可能是完整 data URL 或纯 base64
       const base64Image = image.includes(',') ? image.split(',')[1] : image;
-      
+
       const response = await fetch('/api/analyze-food', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image: base64Image }),
       });
-      
+
       if (!response.ok) {
-        throw new Error('Analysis failed');
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `API error: ${response.status}`);
       }
-      
+
       const result: FoodResult = await response.json();
       setAnalysisResult(result);
-      
-    } catch (error) {
-      console.error('Analysis error:', error);
-      setError(`Failed to analyze food: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      
-      // 仅开发模式 fallback
-      if (process.env.NODE_ENV === 'development') {
-        setAnalysisResult({
-          foods: ['[MOCK] Grilled Chicken', '[MOCK] Steamed Vegetables', '[MOCK] Brown Rice'],
-          calories: 520,
-          nutrition: { protein: 35, carbs: 45, fat: 18 }
-        });
-      }
+
+      // 保存到历史
+      const record: AnalysisRecord = {
+        id: Date.now().toString(),
+        timestamp: Date.now(),
+        imageUrl: image,
+        result,
+      };
+      setHistory(addRecord(record));
+
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      setError(`Failed to analyze: ${msg}`);
+      console.error('Analysis error:', err);
     } finally {
       setIsLoading(false);
     }
@@ -73,25 +79,48 @@ export default function Home() {
           <h1 className="text-4xl font-bold text-gray-800 mb-2">
             🍽️ Nutrition Fitness App
           </h1>
-          <p className="text-gray-600">
-            AI-powered food recognition
+          <p className="text-gray-600 mb-3">
+            AI-powered food recognition · Multi-provider · Raspberry Pi integration
           </p>
+          <div className="flex justify-center gap-3 text-sm">
+            <a
+              href="https://github.com/bengbcit/Nutrition-App"
+              target="_blank"
+              rel="noopener"
+              className="text-blue-600 hover:underline"
+            >
+              📦 GitHub
+            </a>
+            <span className="text-gray-300">|</span>
+            <span className="text-gray-500">
+              Try it: upload a food photo →
+            </span>
+          </div>
         </header>
 
         {!analysisResult ? (
           <div className="max-w-2xl mx-auto">
-            <SmartCamera onCapture={handleCapture} />  {/* ← 改这里 */}
-            
+            <SmartCamera onCapture={handleCapture} />
+            <DemoImages onSelect={handleCapture} />
+
             {isLoading && (
               <div className="mt-8 text-center">
                 <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mb-4"></div>
                 <p className="text-gray-600">Analyzing your food...</p>
               </div>
             )}
-            
+
             {error && (
               <div className="mt-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
-                {error}
+                <p className="mb-2">{error}</p>
+                {imageData && (
+                  <button
+                    onClick={() => handleCapture(imageData)}
+                    className="bg-red-500 hover:bg-red-600 text-white text-sm font-bold py-1 px-3 rounded"
+                  >
+                    🔄 Retry Analysis
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -104,10 +133,18 @@ export default function Home() {
                   <img src={imageData} alt="Food" className="w-full rounded-lg" />
                 </div>
               )}
-              <ResultDisplay result={analysisResult} onReset={handleReset} />
+              <div className="space-y-4">
+                <ResultDisplay result={analysisResult} onReset={handleReset} />
+                <NutritionChart nutrition={analysisResult.nutrition} />
+              </div>
             </div>
           </div>
         )}
+
+        {/* 历史记录 —— 总是显示在底部 */}
+        <div className="max-w-4xl mx-auto">
+          <AnalysisHistory records={history} onUpdate={setHistory} />
+        </div>
       </div>
     </main>
   );

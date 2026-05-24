@@ -16,33 +16,47 @@ const execAsync = promisify(exec);
 export async function POST() {
   const tmpFile = path.join(os.tmpdir(), `capture-${Date.now()}.jpg`);
   
-  try {
-    // rpicam-still 参数：
-    // -o: 输出文件
-    // --width/--height: 分辨率
-    // -t: 预热时间（让 AE/AWB 稳定）
-    // -q: JPEG 质量
-    // -n: 无预览（headless 必须）
-    await execAsync(
-      `rpicam-still -o ${tmpFile} ` +
-      `--width ${RESOLUTION_WIDTH} --height ${RESOLUTION_HEIGHT} ` +
-      `-t ${WARMUP_MS} -q ${JPEG_QUALITY} -n`,
-      { timeout: 15000 }
-    );
-    
-    const buffer = await readFile(tmpFile);
-    const base64 = buffer.toString('base64');
-    const dataUrl = `data:image/jpeg;base64,${base64}`;
-    
-    await unlink(tmpFile).catch(() => {});
-    
-    return NextResponse.json({ image: dataUrl });
-  } catch (error) {
-    await unlink(tmpFile).catch(() => {});
-    console.error('Capture error:', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Capture failed' },
-      { status: 500 }
-    );
+  let lastError: unknown;
+  
+  // 重试最多 3 次，间隔递增
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await execAsync(
+        `rpicam-still -o ${tmpFile} ` +
+        `--width ${RESOLUTION_WIDTH} --height ${RESOLUTION_HEIGHT} ` +
+        `-t ${WARMUP_MS} -q ${JPEG_QUALITY} -n`,
+        { timeout: 15000 }
+      );
+      
+      // 成功了
+      const buffer = await readFile(tmpFile);
+      const base64 = buffer.toString('base64');
+      await unlink(tmpFile).catch(() => {});
+      return NextResponse.json({ image: `data:image/jpeg;base64,${base64}` });
+      
+    } catch (error) {
+      lastError = error;
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const isCameraBusy = errMsg.includes('in use by another process');
+      
+      console.warn(`Capture attempt ${attempt}/3 failed${isCameraBusy ? ' (camera busy)' : ''}`);
+      
+      // 不是最后一次 → 等会再试
+      if (attempt < 3) {
+        // 摄像头被占等更久，其他错误等短点
+        const delay = isCameraBusy ? 800 : 200;
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
   }
+  
+  // 3 次都失败
+  await unlink(tmpFile).catch(() => {});
+  console.error('Capture failed after 3 attempts:', lastError);
+  return NextResponse.json(
+    { 
+      error: lastError instanceof Error ? lastError.message.substring(0, 200) : 'Capture failed',
+    },
+    { status: 500 }
+  );
 }

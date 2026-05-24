@@ -48,6 +48,9 @@ npm run build
 vercel deploy
 \`\`\`
 
+## Demo Images
+Burger, Salad, and Bento images from https://www.magnific.com(License: CC0) 
+
 ## Roadmap
 - [ ] Camera component implementation
 - [ ] Claude Vision API integration
