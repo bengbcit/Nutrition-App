@@ -29,12 +29,24 @@ export default function Camera({ onCapture }: CameraProps) {
                 audio: false,
             });
 
-            if (!videoRef.current) return;
+            // Video element is always in DOM (hidden when inactive), so ref is available
+            if (!videoRef.current) {
+                setError('Video element not ready. Please refresh and try again.');
+                return;
+            }
 
             videoRef.current.srcObject = stream;
-            setIsCameraActive(true);  // ← 直接设，不等 onloadedmetadata
 
-            videoRef.current.play().catch(() => { });  // Safari 需要显式 play
+            // Wait for video metadata to load before showing preview
+            videoRef.current.onloadedmetadata = () => {
+                setIsCameraActive(true);
+            };
+
+            // Explicit play() needed for some browsers; handle autoplay policy blocks
+            videoRef.current.play().catch((err) => {
+                console.error('Video play failed:', err);
+                setError('Video preview blocked by browser. Please tap the screen or use Upload instead.');
+            });
 
         } catch (error) {
             console.error('Camera error:', error);
@@ -87,6 +99,7 @@ export default function Camera({ onCapture }: CameraProps) {
         if (videoRef.current && videoRef.current.srcObject) {
             (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
             videoRef.current.srcObject = null;
+            videoRef.current.onloadedmetadata = null;
             setIsCameraActive(false);
         }
     };
@@ -121,6 +134,28 @@ export default function Camera({ onCapture }: CameraProps) {
 
             {!capturedImage ? (
                 <div className="space-y-4">
+                    {/* Video & canvas always in DOM so refs are available when getUserMedia resolves */}
+                    <video
+                        ref={videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        className={
+                            isCameraActive
+                                ? "w-full rounded-lg bg-black"
+                                : "hidden"
+                        }
+                        style={
+                            isCameraActive
+                                ? { maxHeight: '480px', objectFit: 'cover', minHeight: '200px' }
+                                : undefined
+                        }
+                    />
+                    <canvas
+                        ref={canvasRef}
+                        className="hidden"
+                    />
+
                     {!isCameraActive ? (
                         <button
                             onClick={startCamera}
@@ -129,34 +164,20 @@ export default function Camera({ onCapture }: CameraProps) {
                             📹 Start Camera
                         </button>
                     ) : (
-                        <>
-                            <video
-                                ref={videoRef}
-                                autoPlay
-                                playsInline
-                                muted
-                                className="w-full rounded-lg bg-black"
-                                style={{ maxHeight: '480px', objectFit: 'cover', minHeight: '200px' }}
-                            />
-                            <canvas
-                                ref={canvasRef}
-                                className="hidden"
-                            />
-                            <div className="flex gap-4">
-                                <button
-                                    onClick={capturePhoto}
-                                    className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg transition-colors"
-                                >
-                                    📷 Capture
-                                </button>
-                                <button
-                                    onClick={stopCamera}
-                                    className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg transition-colors"
-                                >
-                                    ✕ Cancel
-                                </button>
-                            </div>
-                        </>
+                        <div className="flex gap-4">
+                            <button
+                                onClick={capturePhoto}
+                                className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg transition-colors"
+                            >
+                                📷 Capture
+                            </button>
+                            <button
+                                onClick={stopCamera}
+                                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg transition-colors"
+                            >
+                                ✕ Cancel
+                            </button>
+                        </div>
                     )}
                 </div>
             ) : (
