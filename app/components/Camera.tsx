@@ -134,8 +134,9 @@ export default function Camera({ onCapture }: CameraProps) {
                                 ref={videoRef}
                                 autoPlay
                                 playsInline
+                                muted
                                 className="w-full rounded-lg bg-black"
-                                style={{ maxHeight: '480px', objectFit: 'cover' }}
+                                style={{ maxHeight: '480px', objectFit: 'cover', minHeight: '200px' }}
                             />
                             <canvas
                                 ref={canvasRef}
