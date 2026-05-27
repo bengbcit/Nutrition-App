@@ -17,45 +17,37 @@ export default function Camera({ onCapture }: CameraProps) {
     const startCamera = async () => {
         setError(null);
         try {
-            // Check if mediaDevices API is available
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                throw new Error('Your browser does not support camera access');
+                throw new Error('Camera API not supported');
             }
 
-            // Try to get camera with optimal settings for Raspberry Pi
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: {
-                    facingMode: 'environment',
-                    width: { ideal: 1280, max: 1920 },
-                    height: { ideal: 720, max: 1080 }
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
                 },
                 audio: false,
             });
 
-            if (videoRef.current) {
-                videoRef.current.srcObject = stream;
-                // Wait for video to be ready
-                await new Promise((resolve) => {
-                    if (videoRef.current) {
-                        videoRef.current.onloadedmetadata = resolve;
-                    }
-                });
-                setIsCameraActive(true);
-            }
+            if (!videoRef.current) return;
+
+            videoRef.current.srcObject = stream;
+            setIsCameraActive(true);  // ← 直接设，不等 onloadedmetadata
+
+            videoRef.current.play().catch(() => { });  // Safari 需要显式 play
+
         } catch (error) {
-            console.error('Camera access error:', error);
+            console.error('Camera error:', error);
             if (error instanceof Error) {
                 if (error.name === 'NotFoundError') {
-                    setError('No camera detected. Please connect a camera and refresh.');
+                    setError('No camera found.');
                 } else if (error.name === 'NotAllowedError') {
-                    setError('Camera permission denied. Please allow camera access in browser settings.');
+                    setError('Camera permission denied.');
                 } else if (error.name === 'NotReadableError') {
-                    setError('Camera is already in use by another application.');
+                    setError('Camera is in use by another app.');
                 } else {
                     setError(`Camera error: ${error.message}`);
                 }
-            } else {
-                setError('Camera access required. Please enable camera permissions.');
             }
         }
     };
