@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import SmartCamera from './components/SmartCamera';
 import DemoImages from './components/DemoImages';
+import ImageUploader from './components/ImageUploader';
 import ResultDisplay from './components/ResultDisplay';
 import NutritionChart from './components/NutritionChart';
 import AnalysisHistory from './components/AnalysisHistory';
@@ -20,6 +21,7 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<AnalysisRecord[]>([]);
+  const [showUploader, setShowUploader] = useState(false);
 
   // 启动时加载历史记录
   useEffect(() => {
@@ -92,9 +94,12 @@ export default function Home() {
               📦 GitHub
             </a>
             <span className="text-gray-300">|</span>
-            <span className="text-gray-500">
-              Try it: upload a food photo →
-            </span>
+            <button
+              onClick={() => setShowUploader(true)}
+              className="text-blue-600 hover:underline cursor-pointer"
+            >
+              Upload Image 📤
+            </button>
           </div>
         </header>
 
@@ -145,6 +150,33 @@ export default function Home() {
         <div className="max-w-4xl mx-auto">
           <AnalysisHistory records={history} onUpdate={setHistory} />
         </div>
+
+        {/* Upload modal */}
+        {showUploader && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onClick={(e) => {
+              // Close when clicking the backdrop (not the modal content)
+              if (e.target === e.currentTarget) setShowUploader(false);
+            }}
+          >
+            <div className="relative w-full max-w-lg">
+              <button
+                onClick={() => setShowUploader(false)}
+                className="absolute -top-3 -right-3 z-10 w-8 h-8 bg-white rounded-full shadow-lg flex items-center justify-center text-gray-600 hover:text-gray-900 transition-colors"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+              <ImageUploader
+                onCapture={(imageData) => {
+                  setShowUploader(false);
+                  handleCapture(imageData);
+                }}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </main>
   );
