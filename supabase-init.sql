@@ -1,34 +1,32 @@
 -- ============================================
--- Supabase Initialization SQL (Execute in Supabase SQL Editor)
+-- Supabase All-in-One SQL: Init + Queries
+-- ============================================
+
+-- ============================================
+-- PART 1: INITIALIZATION (RUN ONCE ONLY)
 -- ============================================
 
 -- 1. Create analysis record table
 CREATE TABLE IF NOT EXISTS analyses (
-  id         TEXT PRIMARY KEY,                  -- Client-generated unique ID (e.g. Date.now().toString())
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), -- Creation timestamp
-  foods      JSONB NOT NULL DEFAULT '[]',        -- Array of food names ["rice", "chicken"]
-  calories   INTEGER NOT NULL DEFAULT 0,         -- Total calories
-  protein    INTEGER NOT NULL DEFAULT 0,         -- Protein (g)
-  carbs      INTEGER NOT NULL DEFAULT 0,         -- Carbohydrates (g)
-  fat        INTEGER NOT NULL DEFAULT 0,         -- Fat (g)
-  image_url  TEXT                                 -- Supabase Storage public URL (optional)
+  id         TEXT PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  foods      JSONB NOT NULL DEFAULT '[]',
+  calories   INTEGER NOT NULL DEFAULT 0,
+  protein    INTEGER NOT NULL DEFAULT 0,
+  carbs      INTEGER NOT NULL DEFAULT 0,
+  fat        INTEGER NOT NULL DEFAULT 0,
+  image_url  TEXT
 );
 
--- 2. Index: Sort by creation time descending (commonly used for history lists)
+-- 2. Index: Sort by creation time descending
 CREATE INDEX IF NOT EXISTS idx_analyses_created_at ON analyses (created_at DESC);
 
--- 3. Index: Query by date (used for daily statistics)
-CREATE INDEX IF NOT EXISTS idx_analyses_date ON analyses ((created_at::date));
+-- 3. Index for date range queries (simpler & reliable)
+CREATE INDEX IF NOT EXISTS idx_analyses_created_at_regular ON analyses (created_at);
 
 -- ============================================
--- 2. Create Storage Bucket (for image storage)
+-- Create Storage Bucket (for image storage)
 -- ============================================
--- Create via Supabase Dashboard → Storage → New Bucket:
---   Bucket name: food-photos
---   Public bucket: ✅ ON (enable public access)
---
--- Or create via SQL:
--- (Note: It is recommended to create Storage buckets via Dashboard UI for better visibility)
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('food-photos', 'food-photos', true)
 ON CONFLICT (id) DO NOTHING;
@@ -38,7 +36,7 @@ CREATE POLICY "Public Read Access"
 ON storage.objects FOR SELECT
 USING (bucket_id = 'food-photos');
 
--- Allow upload operations (service_role bypasses automatically; also open to anon for easier development)
+-- Allow upload operations
 CREATE POLICY "Allow Upload"
 ON storage.objects FOR INSERT
 WITH CHECK (bucket_id = 'food-photos');
@@ -49,14 +47,58 @@ ON storage.objects FOR DELETE
 USING (bucket_id = 'food-photos');
 
 -- ============================================
--- 3. RLS Policy (Row Level Security)
+-- RLS Policy (Row Level Security)
 -- ============================================
--- Enable Row Level Security
 ALTER TABLE analyses ENABLE ROW LEVEL SECURITY;
 
--- Allow all operations (service_role key bypasses RLS automatically)
--- Refine policies later if you need direct client-side access
 CREATE POLICY "Allow all for service_role"
 ON analyses FOR ALL
 USING (true)
 WITH CHECK (true);
+
+-- ============================================
+-- PART 2: COMMON OPERATIONS (FOR DAILY USE)
+-- ============================================
+
+-- Insert example
+-- INSERT INTO analyses (id, foods, calories, protein, carbs, fat, image_url)
+-- VALUES (
+--   'unique-id-123',
+--   '["rice", "chicken", "vegetable"]',
+--   650,
+--   35,
+--   80,
+--   12,
+--   'https://xxx.supabase.co/storage/v1/object/public/food-photos/xxx.jpg'
+-- );
+
+-- Get today's records (use index correctly)
+-- SELECT * 
+-- FROM analyses 
+-- WHERE created_at >= DATE_TRUNC('day', NOW())
+--   AND created_at < DATE_TRUNC('day', NOW()) + INTERVAL '1 day'
+-- ORDER BY created_at DESC;
+
+-- Get all history
+-- SELECT * FROM analyses ORDER BY created_at DESC;
+
+-- Get single record by ID
+-- SELECT * FROM analyses WHERE id = 'unique-id-123';
+
+-- Update record by ID
+-- UPDATE analyses
+-- SET foods = '["rice", "fish"]', calories = 580, protein = 40
+-- WHERE id = 'unique-id-123';
+
+-- Delete record by ID
+-- DELETE FROM analyses WHERE id = 'unique-id-123';
+
+-- Today's statistics using range
+-- SELECT 
+--   SUM(calories) AS total_calories,
+--   SUM(protein) AS total_protein,
+--   SUM(carbs) AS total_carbs,
+--   SUM(fat) AS total_fat
+-- FROM analyses 
+-- WHERE created_at >= DATE_TRUNC('day', NOW())
+--   AND created_at < DATE_TRUNC('day', NOW()) + INTERVAL '1 day';
