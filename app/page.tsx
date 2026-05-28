@@ -11,8 +11,8 @@ import AnalysisHistory from './components/AnalysisHistory';
 import {
   FoodResult,
   AnalysisRecord,
-  loadHistory,
-  addRecord
+  loadHistoryRemote,
+  addRecordRemote
 } from './lib/history';
 
 export default function Home() {
@@ -23,9 +23,9 @@ export default function Home() {
   const [history, setHistory] = useState<AnalysisRecord[]>([]);
   const [showUploader, setShowUploader] = useState(false);
 
-  // 启动时加载历史记录
+  // 启动时从 Supabase 加载历史（失败自动回退到 localStorage）
   useEffect(() => {
-    setHistory(loadHistory());
+    loadHistoryRemote().then(setHistory);
   }, []);
 
   const handleCapture = async (image: string) => {
@@ -50,14 +50,14 @@ export default function Home() {
       const result: FoodResult = await response.json();
       setAnalysisResult(result);
 
-      // 保存到历史
+      // 保存到 Supabase（失败自动回退 localStorage）
       const record: AnalysisRecord = {
         id: Date.now().toString(),
         timestamp: Date.now(),
         imageUrl: image,
         result,
       };
-      setHistory(addRecord(record));
+      addRecordRemote(record).then(setHistory);
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';

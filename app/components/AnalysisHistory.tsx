@@ -1,7 +1,7 @@
 // app/components/AnalysisHistory.tsx
 'use client';
 
-import { AnalysisRecord, getTodayStats, deleteRecord, clearHistory } from '../lib/history';
+import { AnalysisRecord, getTodayStats, deleteRecordRemote, clearHistoryRemote, deleteRecordLocal, clearHistoryLocal } from '../lib/history';
 
 interface AnalysisHistoryProps {
   records: AnalysisRecord[];
@@ -10,20 +10,21 @@ interface AnalysisHistoryProps {
 
 export default function AnalysisHistory({ records, onUpdate }: AnalysisHistoryProps) {
   const stats = getTodayStats(records);
-  
-  const handleDelete = (id: string) => {
+
+  const handleDelete = async (id: string) => {
     if (confirm('Delete this record?')) {
-      onUpdate(deleteRecord(id));
+      const updated = await deleteRecordRemote(id);
+      onUpdate(updated);
     }
   };
-  
-  const handleClear = () => {
+
+  const handleClear = async () => {
     if (confirm('Clear all history? This cannot be undone.')) {
-      clearHistory();
-      onUpdate([]);
+      const updated = await clearHistoryRemote();
+      onUpdate(updated);
     }
   };
-  
+
   if (records.length === 0) {
     return (
       <div className="bg-white rounded-lg shadow-lg p-6 mt-8 text-center text-gray-500">
@@ -44,7 +45,7 @@ export default function AnalysisHistory({ records, onUpdate }: AnalysisHistoryPr
           <Stat label="Carbs / Fat" value={`${stats.totalCarbs.toFixed(0)}g / ${stats.totalFat.toFixed(0)}g`} />
         </div>
       </div>
-      
+
       {/* 历史列表头 */}
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-bold">📋 History ({records.length})</h2>
@@ -55,18 +56,18 @@ export default function AnalysisHistory({ records, onUpdate }: AnalysisHistoryPr
           Clear All
         </button>
       </div>
-      
+
       {/* 记录列表 */}
       <div className="space-y-3 max-h-96 overflow-y-auto">
         {records.map((record) => (
           <div key={record.id} className="border rounded-lg p-3 hover:shadow-md transition flex gap-3">
             {/* 缩略图 */}
-            <img 
-              src={record.imageUrl} 
-              alt="Food" 
+            <img
+              src={record.imageUrl}
+              alt="Food"
               className="w-16 h-16 object-cover rounded flex-shrink-0"
             />
-            
+
             {/* 信息 */}
             <div className="flex-1 min-w-0">
               <p className="text-xs text-gray-500">
@@ -84,7 +85,7 @@ export default function AnalysisHistory({ records, onUpdate }: AnalysisHistoryPr
                 <span>F: {record.result.nutrition.fat}g</span>
               </div>
             </div>
-            
+
             {/* 删除按钮 */}
             <button
               onClick={() => handleDelete(record.id)}
