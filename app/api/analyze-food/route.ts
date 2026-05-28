@@ -10,14 +10,14 @@ const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
-// 性能配置
+// Performance configuration
 const TIMEOUT_MS = 30_000;
-const CACHE_TTL_MS = 10 * 60 * 1000;        // 缓存 10 分钟
-const CACHE_MAX_SIZE = 100;                 // 最多缓存 100 张
-const IMAGE_MAX_BYTES = 4 * 1024 * 1024;    // 4MB 以上的图片建议压缩（前端处理）
+const CACHE_TTL_MS = 10 * 60 * 1000;        // cache for 10 minutes
+const CACHE_MAX_SIZE = 100;                 // max 100 cached entries
+const IMAGE_MAX_BYTES = 4 * 1024 * 1024;    // images >4MB should be compressed on frontend
 
 // ============================================
-// 统一 prompt
+// Unified prompt
 // ============================================
 const ANALYSIS_PROMPT = `Identify foods in this image. Return ONLY valid JSON:
 {
@@ -47,13 +47,12 @@ interface CachedEntry {
 }
 
 // ============================================
-// In-memory cache (使用 Map，LRU 清理)
+// In-memory cache (Map with LRU eviction)
 // ============================================
 const analysisCache = new Map<string, CachedEntry>();
 
 function hashImage(base64: string): string {
-  // 用 SHA-256 哈希，比手写 hash function 可靠得多
-  // 同一张图永远得到同一个 hash
+  // SHA-256 hash ensures the same image always maps to the same key
   return createHash('sha256').update(base64).digest('hex').substring(0, 16);
 }
 
@@ -61,20 +60,20 @@ function getCached(key: string): FoodResult | null {
   const entry = analysisCache.get(key);
   if (!entry) return null;
 
-  // 过期了 → 删除
+  // Expired → delete
   if (Date.now() > entry.expiresAt) {
     analysisCache.delete(key);
     return null;
   }
 
-  // LRU: 重新插入让它移到 Map 末尾（"最近使用")
+  // LRU: re-insert to move to end of Map (most recently used)
   analysisCache.delete(key);
   analysisCache.set(key, entry);
   return entry.result;
 }
 
 function setCached(key: string, result: FoodResult) {
-  // 超过最大容量 → 删除最老的（Map 头部）
+  // Exceeded max capacity → evict oldest (head of Map)
   if (analysisCache.size >= CACHE_MAX_SIZE) {
     const oldestKey = analysisCache.keys().next().value;
     if (oldestKey) analysisCache.delete(oldestKey);
@@ -101,23 +100,23 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = T
 }
 
 // ============================================
-// JSON 解析（处理 markdown 包裹、附带文本等情况）
+// JSON parsing (handles markdown wrapping, trailing text, etc.)
 // ============================================
 function safeJsonParse(text: string): FoodResult {
-  // 尝试 1: 直接解析
+  // Attempt 1: direct parse
   try {
     return JSON.parse(text);
   } catch { }
 
-  // 清理 markdown 标记
+  // Strip markdown markers
   const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
 
-  // 尝试 2: 清理后解析
+  // Attempt 2: parse after cleaning
   try {
     return JSON.parse(cleaned);
   } catch { }
 
-  // 尝试 3: 提取完整 { ... } 块
+  // Attempt 3: extract full { ... } block
   const fullMatch = cleaned.match(/\{[\s\S]*\}/);
   if (fullMatch) {
     try {
@@ -125,8 +124,8 @@ function safeJsonParse(text: string): FoodResult {
     } catch { }
   }
 
-  // 尝试 4: 修复被截断的 JSON
-  // 比如 '{"foods": ["A", "B"], "c'  →  '{"foods": ["A", "B"]}'
+  // Attempt 4: repair truncated JSON
+  // e.g. '{"foods": ["A", "B"], "c'  →  '{"foods": ["A", "B"]}'
   try {
     return repairTruncatedJson(cleaned);
   } catch { }
@@ -135,14 +134,14 @@ function safeJsonParse(text: string): FoodResult {
 }
 
 // ====================================================
-// 尝试修复被截断的 JSON,只要前面有完整的 foods 数组就够用
+// Attempt to repair truncated JSON — as long as the foods array is intact
 // ====================================================
 function repairTruncatedJson(text: string): FoodResult {
-  // 提取 foods 数组
+  // Extract foods array
   const foodsMatch = text.match(/"foods"\s*:\s*\[([\s\S]*?)\]/);
   if (!foodsMatch) throw new Error('No foods array found');
 
-  // 解析 foods 数组
+  // Parse foods array
   const foodsArrayStr = '[' + foodsMatch[1] + ']';
   let foods: string[];
   try {
@@ -151,7 +150,7 @@ function repairTruncatedJson(text: string): FoodResult {
     throw new Error('Could not parse foods array');
   }
 
-  // 提取数字字段（即使没找到也用合理默认值）
+  // Extract numeric fields (use sensible defaults if missing)
   const caloriesMatch = text.match(/"calories"\s*:\s*(\d+)/);
   const proteinMatch = text.match(/"protein"\s*:\s*(\d+)/);
   const carbsMatch = text.match(/"carbs"\s*:\s*(\d+)/);
@@ -183,18 +182,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No image provided' }, { status: 400 });
     }
 
-    // 兼容带 header 和纯 base64 两种格式
+    // Accept both data URL with header and plain base64
     const base64Image = image.includes(',') ? image.split(',')[1] : image;
 
-    // 监控：图片大小
-    const imageBytes = Math.floor(base64Image.length * 0.75);  // base64 解码后大约是 75% 大小
+    // Monitor: image size
+    const imageBytes = Math.floor(base64Image.length * 0.75);  // base64 decoded is ~75% of encoded size
     const imageKB = (imageBytes / 1024).toFixed(0);
 
     if (imageBytes > IMAGE_MAX_BYTES) {
       console.warn(`⚠️  Large image: ${imageKB}KB. Consider compressing on frontend.`);
     }
 
-    // 缓存检查
+    // Cache check
     const cacheKey = hashImage(base64Image);
     const cached = getCached(cacheKey);
     if (cached) {
@@ -206,7 +205,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // 缓存 miss，调用 AI
+    // Cache miss — call AI provider
     console.log(`🔍 Analyzing with provider: ${PROVIDER} | image: ${imageKB}KB | cache size: ${analysisCache.size}`);
 
     let result: FoodResult;
@@ -224,7 +223,7 @@ export async function POST(request: NextRequest) {
         result = await analyzeWithMock();
     }
 
-    // 写入缓存
+    // Write to cache
     setCached(cacheKey, result);
 
     const elapsed = Date.now() - startTime;
@@ -239,7 +238,7 @@ export async function POST(request: NextRequest) {
     const elapsed = Date.now() - startTime;
     console.error(`❌ API Error after ${elapsed}ms:`, error);
 
-    // 区分超时和其他错误
+    // Distinguish timeout from other errors
     const isTimeout = error instanceof Error && error.name === 'AbortError';
 
     return NextResponse.json(

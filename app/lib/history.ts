@@ -1,8 +1,8 @@
 // app/lib/history.ts
 // 
-// 数据持久化策略：
-//   1. 优先 → Supabase（API Routes → 服务端 DB + Storage）
-//   2. 降级 → localStorage（Supabase 未配置时自动回退）
+// Data persistence strategy:
+//   1. Primary → Supabase (API Routes → server-side DB + Storage)
+//   2. Fallback → localStorage (auto-fallback when Supabase is not configured)
 
 export interface FoodResult {
   foods: string[];
@@ -13,15 +13,15 @@ export interface FoodResult {
 export interface AnalysisRecord {
   id: string;
   timestamp: number;     // Unix ms
-  imageUrl: string;      // base64 data URL 或 Supabase Storage 公开 URL
+  imageUrl: string;      // base64 data URL or Supabase Storage public URL
   result: FoodResult;
 }
 
 const STORAGE_KEY = 'nutrition-fitness-history';
-const MAX_RECORDS = 50;  // 防止 localStorage 爆炸
+const MAX_RECORDS = 50;  // prevent localStorage from overflowing
 
 // ============================================
-// Supabase API 模式（优先使用）
+// Supabase API mode (preferred)
 // ============================================
 
 export async function loadHistoryRemote(): Promise<AnalysisRecord[]> {
@@ -43,7 +43,7 @@ export async function addRecordRemote(record: AnalysisRecord): Promise<AnalysisR
       body: JSON.stringify(record),
     });
     if (!res.ok) throw new Error('API error');
-    // 重新加载最新列表
+    // reload latest list after insert
     return await loadHistoryRemote();
   } catch (e) {
     console.warn('Failed to save to Supabase, falling back to localStorage:', e);
@@ -65,8 +65,7 @@ export async function deleteRecordRemote(id: string): Promise<AnalysisRecord[]> 
 }
 
 export async function clearHistoryRemote(): Promise<AnalysisRecord[]> {
-  // Supabase 模式下逐条删除（避免一次 SQL 清空整表）
-  // 实际使用中建议在 UI 里逐条删，这里提供简单实现
+  // Delete one-by-one to avoid accidentally truncating the entire table
   try {
     const records = await loadHistoryRemote();
     for (const r of records) {
@@ -80,7 +79,7 @@ export async function clearHistoryRemote(): Promise<AnalysisRecord[]> {
 }
 
 // ============================================
-// localStorage 模式（fallback / 离线）
+// localStorage mode (fallback / offline)
 // ============================================
 
 export function loadHistoryLocal(): AnalysisRecord[] {
@@ -123,23 +122,23 @@ function saveHistoryLocal(records: AnalysisRecord[]): void {
 }
 
 // ============================================
-// 兼容旧 API（别名，保持现有代码不报错）
+// Legacy API aliases (for backward compatibility)
 // ============================================
 
-/** @deprecated 使用 loadHistoryRemote() 或 loadHistoryLocal() */
+/** @deprecated Use loadHistoryRemote() or loadHistoryLocal() */
 export const loadHistory = loadHistoryLocal;
-/** @deprecated 使用 addRecordRemote() 或 addRecordLocal() */
+/** @deprecated Use addRecordRemote() or addRecordLocal() */
 export const addRecord = addRecordLocal;
-/** @deprecated 使用 deleteRecordRemote() 或 deleteRecordLocal() */
+/** @deprecated Use deleteRecordRemote() or deleteRecordLocal() */
 export const deleteRecord = deleteRecordLocal;
-/** @deprecated 使用 clearHistoryRemote() 或 clearHistoryLocal() */
+/** @deprecated Use clearHistoryRemote() or clearHistoryLocal() */
 export const clearHistory = clearHistoryLocal;
 
 function saveHistory(records: AnalysisRecord[]): void {
   saveHistoryLocal(records);
 }
 
-// 计算今日统计
+// Calculate today's statistics
 export function getTodayStats(records: AnalysisRecord[]) {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);

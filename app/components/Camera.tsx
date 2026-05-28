@@ -72,7 +72,7 @@ export default function Camera({ onCapture }: CameraProps) {
                 const origWidth = videoRef.current.videoWidth;
                 const origHeight = videoRef.current.videoHeight;
 
-                // 限制最大边长 1280px，按比例缩放
+                // Limit max dimension to 1280px, scale proportionally
                 const MAX_DIM = 1280;
                 let width = origWidth;
                 let height = origHeight;
@@ -86,7 +86,7 @@ export default function Camera({ onCapture }: CameraProps) {
                 canvasRef.current.height = height;
                 context.drawImage(videoRef.current, 0, 0, width, height);
 
-                // 0.85 质量，对 AI 来说足够
+                // JPEG quality 0.85 — good enough for AI analysis
                 const imageData = canvasRef.current.toDataURL('image/jpeg', 0.85);
                 setCapturedImage(imageData);
                 onCapture(imageData);

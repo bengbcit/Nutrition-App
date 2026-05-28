@@ -1,4 +1,4 @@
-# 现有的（保留）
+# Existing (keep)
 node_modules/
 .env.local
 .env*.local
@@ -8,24 +8,24 @@ dist/
 *.log
 certificates
 
-# 建议新增的
-.env                    # 任何 env 文件都别提交（保险起见）
-!.env.example           # 但允许提交 .env.example 模板
+# Recommended additions
+.env                    # Never commit any env files (safety first)
+!.env.example           # But allow the .env.example template
 
-# 临时测试文件
+# Temp test files
 test_*.jpg
 test_*.png
 test.html
 t.html
 *.tmp
 
-# OS 生成的垃圾
+# OS generated junk
 .DS_Store               # Mac
 Thumbs.db               # Windows
 desktop.ini             # Windows
 
-# IDE 配置
-.vscode/                # 如果有的话，里面可能有本地路径
+# IDE config
+.vscode/                # May contain local paths
 .idea/
 
 # Pi 相关

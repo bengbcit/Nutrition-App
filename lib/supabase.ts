@@ -1,4 +1,4 @@
-// lib/supabase.ts — Supabase 服务端客户端（仅在 API Routes / Server Components 使用）
+// lib/supabase.ts — Supabase server-side client (API Routes / Server Components only)
 import { createClient } from '@supabase/supabase-js';
 
 // 数据库行类型
@@ -72,5 +72,5 @@ export async function deleteImage(recordId: string): Promise<void> {
   await supabase.storage
     .from(STORAGE_BUCKET)
     .remove([filePath])
-    .catch(() => {});  // 静默失败——图片可能不存在
+    .catch(() => { });  // 静默失败——图片可能不存在
 }

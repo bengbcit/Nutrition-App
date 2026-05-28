@@ -2,7 +2,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // 允许局域网内的其他设备访问开发服务器
+  // Allow LAN devices to access the dev server
   allowedDevOrigins: ['192.168.1.64', 'localhost', '192.168.1.*'],
   images: {
     remotePatterns: [
@@ -12,7 +12,7 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  // API 路由处理大图片（base64 后会膨胀 33%）需要放宽 body 限制
+  // API routes handle large base64 images — relax body size limit
   experimental: {
     serverActions: {
       bodySizeLimit: '10mb',

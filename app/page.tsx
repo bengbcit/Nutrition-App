@@ -23,7 +23,7 @@ export default function Home() {
   const [history, setHistory] = useState<AnalysisRecord[]>([]);
   const [showUploader, setShowUploader] = useState(false);
 
-  // 启动时从 Supabase 加载历史（失败自动回退到 localStorage）
+  // Load history from Supabase on mount (auto-fallback to localStorage)
   useEffect(() => {
     loadHistoryRemote().then(setHistory);
   }, []);
@@ -50,7 +50,7 @@ export default function Home() {
       const result: FoodResult = await response.json();
       setAnalysisResult(result);
 
-      // 保存到 Supabase（失败自动回退 localStorage）
+      // Save to Supabase (auto-fallback to localStorage)
       const record: AnalysisRecord = {
         id: Date.now().toString(),
         timestamp: Date.now(),
@@ -146,7 +146,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* 历史记录 —— 总是显示在底部 */}
+        {/* History — always shown at bottom */}
         <div className="max-w-4xl mx-auto">
           <AnalysisHistory records={history} onUpdate={setHistory} />
         </div>
